@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f5132">
+<title>Coran Mémo</title>
+<style>
+• { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; background: #f6f4ee; color: #1b1b1b; }
+header { background: #0f5132; color: #fff; padding: 14px 16px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 5; }
+header h1 { font-size: 18px; margin: 0; flex: 1; }
+button { font-size: 16px; padding: 12px 16px; border: 0; border-radius: 10px; background: #0f5132; color: #fff; }
+button.sec { background: #e3e0d4; color: #1b1b1b; }
+button.on { background: #b45309; color: #fff; }
+button:disabled { opacity: .4; }
+#recherche { width: calc(100% - 24px); margin: 12px; padding: 12px; font-size: 16px; border-radius: 10px; border: 1px solid #ccc; }
+.sourate { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid #e3e0d4; background: #fff; }
+.sourate small { color: #666; display: block; }
+.sourate .ar { font-size: 22px; font-family: 'Amiri', 'Scheherazade New', serif; }
+.badge { background: #b45309; color: #fff; border-radius: 8px; font-size: 12px; padding: 2px 8px; margin-left: 6px; }
+#memo { display: none; padding: 16px; }
+#verset { font-size: 34px; line-height: 2.1; direction: rtl; text-align: right; font-family: 'Amiri', 'Scheherazade New', serif; background: #fff; border-radius: 14px; padding: 18px; min-height: 140px; }
+#verset.masque { filter: blur(12px); user-select: none; }
+.faux { color: #c1121f; font-weight: bold; }
+.rangee { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.rangee button { flex: 1; min-width: 120px; }
+#etat { min-height: 24px; color: #444; margin: 8px 0; }
+</style>
+</head>
+<body>
+
+<header>
+<button id="retour" class="sec" style="display:none">←</button>
+<h1 id="titre">Coran Mémo</h1>
+</header>
+
+<section id="liste">
+<input id="recherche" type="search" placeholder="Chercher une sourate…">
+<div id="sourates">Chargement du texte…</div>
+</section>
+
+<section id="memo">
+<div id="compteur"></div>
+<div id="verset"></div>
+<div id="etat"></div>
+<div class="rangee">
+<button id="bMasquer" class="sec">Masquer</button>
+<button id="bEcouter">Écouter</button>
+<button id="bBoucle" class="on">Boucle : oui</button>
+</div>
+<div class="rangee">
+<button id="bReciter">🎤 Réciter</button>
+</div>
+<div class="rangee">
+<button id="bPrec" class="sec">Précédent</button>
+<button id="bSuiv" class="sec">Suivant</button>
+</div>
+</section>
+
+<audio id="audio"></audio>
+
+<script>
+const URL_CORAN = 'https://api.alquran.cloud/v1/quran/quran-uthmani';
+let coran = [];
+let progression = JSON.parse(localStorage.getItem('progression') || '{}');
+
+function sauverProgression() {
+localStorage.setItem('progression', JSON.stringify(progression));
+}
+function aujourdhui() { return new Date().toISOString().slice(0, 10); }
+
+function aReviser(etat) {
+if (!etat || !etat.date) return false;
+const prochaine = new Date(etat.date);
+prochaine.setDate(prochaine.getDate() + (etat.intervalle || 1));
+return prochaine.toISOString().slice(0, 10) <= aujourdhui();
+}
+
+function enregistrerReussite(numero, total) {
+const e = progression[numero] || { appris: 0, date: null, intervalle: 1 };
+e.appris = Math.min(e.appris + 1, total);
+e.intervalle = e.date ? Math.min(e.intervalle * 2, 60) : 1;
+e.date = aujourdhui();
+progression[numero] = e;
+sauverProgression();
+}
+
+function enregistrerEchec(numero) {
+const e = progression[numero] || { appris: 0, date: null, intervalle: 1 };
+e.intervalle = 1;
+e.date = aujourdhui();
+progression[numero] = e;
+sauverProgression();
+}
+
+async function chargerCoran() {
+const enCache = localStorage.getItem('coran');
+let json;
+if (enCache) {
+json = JSON.parse(enCache);
+} else {
+const reponse = await fetch(URL_CORAN);
+json = await reponse.json();
+try { localStorage.setItem('coran', JSON.stringify(json)); } catch (e) {}
+}
+coran = json.data.surahs.map(s => ({
+numero: s.number,
+nom: s.englishName,
+nomAr: s.name,
+versets: s.ayahs.map(a => ({ n: a.numberInSurah, texte: a.text }))
+}));
+}
+
+function afficherListe(filtre = '') {
+const conteneur = document.getElementById('sourates');
+const f = filtre.trim().toLowerCase();
+conteneur.innerHTML = '';
+coran
+.filter(s => !f || s.nom.toLowerCase().includes(f) || String(s.numero) === f)
+.forEach(s => {
+const etat = progression[s.numero];
+const appris = etat ? etat.appris : 0;
+const div = document.createElement('div');
+div.className = 'sourate';
+div.innerHTML =
+'<div><strong>' + s.numero + '. ' + s.nom + '</strong>' +
+(aReviser(etat) ? '<span class="badge">à réviser</span>' : '') +
+'<small>' + appris + ' / ' + s.versets.length + ' versets appris</small></div>' +
+'<div class="ar">' + s.nomAr + '</div>';
+div.onclick = () => ouvrirSourate(s);
+conteneur.appendChild(div);
+});
+}
+
+document.getElementById('recherche').addEventListener('input', e => afficherListe(e.target.value));
+let sourateCourante = null;
+let indexVerset = 0;
+let boucle = true;
+let reconnaissance = null;
+let enEcoute = false;
+let derniereErreur = -2;
+
+const audio = document.getElementById('audio');
+const elVerset = document.getElementById('verset');
+const elEtat = document.getElementById('etat');
+
+const DIACRITIQUES = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g;
+
+function normaliser(t) {
+return t.replace(DIACRITIQUES, '')
+.replace(/[\u0671\u0623\u0625\u0622]/g, '\u0627')
+.replace(/\u0649/g, '\u064A')
+.replace(/\u0629/g, '\u0647')
+.replace(/\u0640/g, '')
+.trim();
+}
+
+function mots(t) {
+return normaliser(t).split(/\s+/).filter(m => m.length);
+}
+
+function premiereErreur(attendu, recite) {
+const a = mots(attendu), r = mots(recite);
+for (let i = 0; i < r.length; i++) {
+if (i >= a.length) return -1;
+if (r[i] !== a[i]) return i;
+}
+return -1;
+}
+
+let ctxAudio = null;
+function bip() {
+ctxAudio = ctxAudio || new (window.AudioContext || window.webkitAudioContext)();
+const osc = ctxAudio.createOscillator();
+const gain = ctxAudio.createGain();
+osc.frequency.value = 520;
+gain.gain.value = 0.4;
+osc.connect(gain); gain.connect(ctxAudio.destination);
+osc.start();
+osc.stop(ctxAudio.currentTime + 0.3);
+if (navigator.vibrate) navigator.vibrate(200);
+}
+
+function afficherVerset(motFaux = -1) {
+const v = sourateCourante.versets[indexVerset];
+document.getElementById('compteur').textContent =
+'Verset ' + v.n + ' / ' + sourateCourante.versets.length;
+elVerset.innerHTML = v.texte.split(' ').map((m, i) =>
+i === motFaux ? '<span class="faux">' + m + '</span>' : m).join(' ');
+document.getElementById('bPrec').disabled = indexVerset === 0;
+document.getElementById('bSuiv').disabled = indexVerset >= sourateCourante.versets.length - 1;
+}
+
+function ouvrirSourate(s) {
+sourateCourante = s;
+indexVerset = 0;
+document.getElementById('liste').style.display = 'none';
+document.getElementById('memo').style.display = 'block';
+document.getElementById('retour').style.display = 'block';
+document.getElementById('titre').textContent = s.numero + '. ' + s.nom;
+elEtat.textContent = '';
+afficherVerset();
+}
+
+function fermerSourate() {
+arreterTout();
+document.getElementById('liste').style.display = 'block';
+document.getElementById('memo').style.display = 'none';
+document.getElementById('retour').style.display = 'none';
+document.getElementById('titre').textContent = 'Coran Mémo';
+afficherListe(document.getElementById('recherche').value);
+}
+
+function changerVerset(delta) {
+arreterTout();
+indexVerset += delta;
+elEtat.textContent = '';
+afficherVerset();
+}
+
+function pad3(n) { return String(n).padStart(3, '0'); }
+
+function jouerVerset() {
+stopReconnaissance();
+const v = sourateCourante.versets[indexVerset];
+audio.src = 'https://everyayah.com/data/Alafasy_64kbps/' +
+pad3(sourateCourante.numero) + pad3(v.n) + '.mp3';
+audio.loop = boucle;
+audio.play();
+document.getElementById('bEcouter').textContent = 'Stop audio';
+}
+
+function stopAudio() {
+audio.pause();
+document.getElementById('bEcouter').textContent = 'Écouter';
+}
+
+function demarrerReconnaissance() {
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SR) {
+elEtat.textContent = 'La reconnaissance vocale demande Chrome.';
+return;
+}
+stopAudio();
+derniereErreur = -2;
+afficherVerset();
+reconnaissance = new SR();
+reconnaissance.lang = 'ar-SA';
+reconnaissance.interimResults = true;
+reconnaissance.continuous = false;
+
+reconnaissance.onresult = (ev) => {
+const texte = Array.from(ev.results).map(r => r[0].transcript).join(' ');
+const v = sourateCourante.versets[indexVerset];
+const i = premiereErreur(v.texte, texte);
+if (i >= 0 && i !== derniereErreur) {
+derniereErreur = i;
+bip();
+afficherVerset(i);
+elEtat.textContent = 'Erreur au mot ' + (i + 1) + '. Réessaie.';
+}
+const dernier = ev.results[ev.results.length - 1];
+if (dernier.isFinal) {
+const juste = mots(v.texte).join(' ') === mots(texte).join(' ');
+if (juste) {
+enregistrerReussite(sourateCourante.numero, sourateCourante.versets.length);
+elEtat.textContent = 'Bravo, verset réussi !';
+} else {
+enregistrerEchec(sourateCourante.numero);
+if (derniereErreur < 0) elEtat.textContent = 'Il manque des mots. Réessaie.';
+}
+}
+};
+reconnaissance.onerror = (e) => {
+elEtat.textContent = e.error === 'not-allowed'
+? 'Autorise le micro dans Chrome.' : 'Erreur micro : ' + e.error;
+stopReconnaissance();
+};
+reconnaissance.onend = () => stopReconnaissance();
+
+reconnaissance.start();
+enEcoute = true;
+elEtat.textContent = 'Je t'écoute… récite le verset.';
+document.getElementById('bReciter').textContent = '⏹ Arrêter';
+}
+
+function stopReconnaissance() {
+if (reconnaissance) { try { reconnaissance.stop(); } catch (e) {} reconnaissance = null; }
+enEcoute = false;
+document.getElementById('bReciter').textContent = '🎤 Réciter';
+}
+
+function arreterTout() { stopAudio(); stopReconnaissance(); }
+
+document.getElementById('retour').onclick = fermerSourate;
+document.getElementById('bPrec').onclick = () => changerVerset(-1);
+document.getElementById('bSuiv').onclick = () => changerVerset(1);
+document.getElementById('bMasquer').onclick = () => {
+const m = elVerset.classList.toggle('masque');
+document.getElementById('bMasquer').textContent = m ? 'Afficher' : 'Masquer';
+};
+document.getElementById('bEcouter').onclick = () => {
+if (audio.paused) jouerVerset(); else stopAudio();
+};
+document.getElementById('bBoucle').onclick = () => {
+boucle = !boucle;
+audio.loop = boucle;
+const b = document.getElementById('bBoucle');
+b.textContent = 'Boucle : ' + (boucle ? 'oui' : 'non');
+b.classList.toggle('on', boucle);
+};
+document.getElementById('bReciter').onclick = () => {
+if (enEcoute) stopReconnaissance(); else demarrerReconnaissance();
+};
+
+chargerCoran()
+.then(() => afficherListe())
+.catch(() => {
+document.getElementById('sourates').textContent =
+'Impossible de charger le texte. Vérifie ta connexion Internet.';
+});
+</script>
+</body>
+</html>
